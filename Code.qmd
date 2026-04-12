@@ -1,0 +1,911 @@
+---
+title: "Zivilgesellschaft im Netzwerk"
+author: Sophia Luhr
+format:
+  html:
+    embed-resources: true
+editor: visual
+execute:
+  warning: false
+---
+
+# ÜBERBLICK
+
+1.) Cooperation-Netzwerk: Verbindung über gemeinsame Kooperationen <br>
+2.) Issue-Netzwerk: Verbindung über gemeinsame Themen <br> 
+3.) Participation-Netzwerk: Verbindung über gemeinsame Teilnahme an Veranstaltungen <br> <br> 
+Knotenattribute: <br>
+- Name <br>
+- ID <br>
+- Ego-Alter <br>
+- Gründungsjahr <br>
+- Mitgliederzahl <br>
+- Akteurstypus <br>
+- Van-der-Meer-Typus <br>
+- Pötzsch-Typus 
+
+# PAKETE
+
+```{r}
+#| message: false
+library(igraph)   # Netzwerkanalyse
+library(dplyr)    # Datenmanipulation
+library(tidyr)    # Datenumstrukturierung
+library(readxl)   # Excel einlesen
+library(writexl)  # Excel exportieren
+library(plotly)   # interaktive Visualisierung
+library(stringr)  # Textbearbeitung
+```
+
+# DATEN LADEN
+
+```{r}
+path <- "/Users/sophialuhr/Desktop/1. Semester/Netzwerke/Code/data.xlsx"
+
+eig       <- read_excel(path, "Eigenschaften")
+iss       <- read_excel(path, "Interessen")
+part      <- read_excel(path, "Veranstaltungen")
+coop      <- read_excel(path, "Kooperationen")
+```
+
+# ISSUE-NETZWERK + PARTICIPATION-NETZWERK: Projektionen
+
+```{r}
+# Funktion: Projektion bipartites Netzwerk
+make_bipartite_projection <- function(df, projection = c("actors", "items")) {
+  projection <- match.arg(projection)
+  
+  # Umwandlung wide- zu long-Format
+  long <- df %>%
+    pivot_longer(-Name, names_to = "item", values_to = "value") %>%
+    filter(value == 1)
+
+  # Erstellung bipartiter Graph
+  g <- graph_from_data_frame(long %>% select(Name, item), directed = FALSE)
+  
+  # Kennzeichnung Knotentyp (TRUE = Akteure / FALSE = Items)
+  V(g)$type <- V(g)$name %in% df$Name
+  
+  # Projektion
+  proj <- bipartite_projection(g)
+  g_actors <- proj$proj2
+  g_items  <- proj$proj1
+  
+  if (projection == "actors") {
+    return(g_actors)
+  } else {
+    return(g_items)
+  }
+}
+
+# Issue-Netzwerk
+g_iss_actor   <- make_bipartite_projection(iss, "actors")
+g_iss_items  <- make_bipartite_projection(iss, "items")
+
+# Participation-Netzwerk
+g_part_actor  <- make_bipartite_projection(part, "actors")
+g_part_items <- make_bipartite_projection(part, "items")
+```
+
+# KOOPERATIONSNETZWERK: Adjazenzmatrix (Akteur-Akteur)
+
+```{r}
+# Umwandlung Excel-Tabelle in Matrix
+coop_mat <- as.matrix(coop[, -1])
+coop_mat[is.na(coop_mat)] <- 0 # NA = 0
+
+# Zeilen- und Spaltennamen setzen
+rownames(coop_mat) <- coop$Name
+colnames(coop_mat) <- coop$Name
+
+# Erstellung des Netzwerks
+g_coop <- graph_from_adjacency_matrix(coop_mat, mode = "undirected", diag = FALSE)
+```
+
+# ATTRIBUTE AN KNOTEN
+
+```{r}
+add_attributes <- function(g, eig) {
+  
+  # Matching Akteure
+  m <- match(V(g)$name, eig$Name)
+  
+  # Attribute hinzufügen
+  V(g)$ID  <- eig$`ID`[m]
+  V(g)$Ego_Alter  <- eig$`Ego-Alter`[m]
+  V(g)$Gruendungsjahr  <- eig$`Gründungsjahr`[m]
+  V(g)$Mitgliederzahl <- as.numeric(eig$Mitgliederzahl[m])
+  V(g)$Akteurstypus   <- eig$Akteurstypus[m]
+  V(g)$Meer_Typus     <- eig$`Van der Meer-Typus`[m]
+  V(g)$Poetzsch_Typus   <- eig$`Pötzsch-Typus`[m]
+  
+  g
+}
+
+g_coop       <- add_attributes(g_coop, eig)
+g_iss_actor  <- add_attributes(g_iss_actor, eig)
+g_part_actor <- add_attributes(g_part_actor, eig)
+```
+
+# COMMUNITY-DETECTION
+
+Die Communities werden mithilfe des Louvain-Algorithmus identifiziert. <br> <br> Community: eine Gruppe von Knoten, die untereinander stärker verbunden sind als mit dem restlichen Netzwerk
+
+```{r}
+# 1.) Cooperation-Netzwerk
+comm_coop_obj <- cluster_louvain(g_coop)
+
+comm_coop <- data.frame(
+  Name = V(g_coop)$name,
+  Community = membership(comm_coop_obj)
+)
+
+comm_coop <- comm_coop %>%
+  left_join(eig, by = "Name")
+
+comm_sizes_coop <- as.data.frame(table(comm_coop$Community))
+colnames(comm_sizes_coop) <- c("Community","Anzahl_Akteure")
+
+# 2.) Issue-Netzwerk (Akteur-Projektion)
+comm_iss_obj <- cluster_louvain(g_iss_actor)
+
+comm_iss <- data.frame(
+  Name = V(g_iss_actor)$name,
+  Community = membership(comm_iss_obj)
+)
+
+comm_iss <- comm_iss %>%
+  left_join(eig, by = "Name")
+
+comm_sizes_iss <- as.data.frame(table(comm_iss$Community))
+colnames(comm_sizes_iss) <- c("Community","Anzahl_Akteure")
+
+# 2.1.) Issue-Netzwerk (Themen-Projektion)
+
+comm_iss_items_obj <- cluster_louvain(g_iss_items)
+
+comm_iss_items <- data.frame(
+  Thema = V(g_iss_items)$name,
+  Community = membership(comm_iss_items_obj)
+)
+
+comm_sizes_iss_items <- as.data.frame(table(comm_iss_items$Community))
+colnames(comm_sizes_iss_items) <- c("Community","Anzahl_Themen")
+
+# 3.) Participation-Netzwerk (Akteur-Projektion)
+comm_part_obj <- cluster_louvain(g_part_actor)
+
+comm_part <- data.frame(
+  Name = V(g_part_actor)$name,
+  Community = membership(comm_part_obj)
+)
+
+comm_part <- comm_part %>%
+  left_join(eig, by = "Name")
+
+comm_sizes_part <- as.data.frame(table(comm_part$Community))
+colnames(comm_sizes_part) <- c("Community","Anzahl_Akteure")
+
+# 3.1.) Participation-Netzwerk (Veranstaltungsprojektion)
+comm_part_items_obj <- cluster_louvain(g_part_items)
+
+comm_part_items <- data.frame(
+Veranstaltung = V(g_part_items)$name,
+  Community = membership(comm_part_items_obj)
+)
+
+comm_sizes_part_items <- as.data.frame(table(comm_part_items$Community))
+colnames(comm_sizes_part_items) <- c("Community","Anzahl_Veranstaltungen")
+```
+
+# VISUALISIERUNG
+
+Layout: Fruchtermann-Reingold <br>
+Knotengröße: Degree
+
+```{r}
+# 1.) Cooperation-Netzwerk
+# Vorbereitung
+deg   <- degree(g_coop)
+vsize <- 4 + 2.5 * sqrt(deg)
+set.seed(123)
+lay <- layout_with_fr(g_coop)
+alter_ego <- ifelse(
+  V(g_coop)$Ego_Alter == "Ego",
+  "circle",
+  "square"
+)
+
+# Ohne Communities
+plot(
+  g_coop,
+  layout = lay,
+  vertex.color = "grey80",
+  vertex.size = vsize,
+  vertex.shape = alter_ego,
+  vertex.frame.color = "grey50",
+  vertex.label = V(g_coop)$ID,
+  vertex.label.cex = 0.3,
+  vertex.label.color = "black",
+  main = "Cooperation-Netzwerk"
+)
+
+# Communities
+cols_coop <- rainbow(length(unique(membership(comm_coop_obj))))
+
+par(xpd = TRUE)
+
+plot(
+  g_coop,
+  layout = lay,
+  vertex.color = cols_coop[membership(comm_coop_obj)],
+  vertex.size = vsize,
+  vertex.shape = alter_ego,
+  vertex.frame.color = "grey50",
+  vertex.label = V(g_coop)$ID,
+  vertex.label.cex = 0.3,
+  vertex.label.color = "black",
+  main = "Cooperation-Netzwerk (Communities)"
+)
+
+legend(
+  "topright",
+  legend = paste("Community", sort(unique(membership(comm_coop_obj)))),
+  col = cols_coop,
+  pch = 19,
+  pt.cex = 1,
+  cex = 0.5,
+  bty = "n"
+)
+
+# Abbildung speichern
+png("cooperation_network_communities.png", width = 2000, height = 1500, res = 300)
+plot(
+  g_coop,
+  layout = lay,
+  vertex.color = cols_coop[membership(comm_coop_obj)],
+  vertex.size = vsize,
+  vertex.shape = alter_ego,
+  vertex.frame.color = "grey50",
+  vertex.label = V(g_coop)$ID,
+  vertex.label.cex = 0.3,
+  vertex.label.color = "black",
+  main = "Cooperation-Netzwerk (Communities)"
+)
+
+legend(
+  "topright",
+  legend = paste("Community", sort(unique(membership(comm_coop_obj)))),
+  col = cols_coop,
+  pch = 19,
+  pt.cex = 1,
+  cex = 0.5,
+  bty = "n"
+)
+dev.off()
+```
+
+```{r}
+# 2.) Issue-Netzwerk (Akteure)
+# Vorbereitung
+deg   <- degree(g_iss_actor)
+vsize <- 2 + 1.5 * sqrt(deg)
+set.seed(123)
+lay   <- layout_with_fr(g_iss_actor)
+
+# Akteur-Projektion
+plot(
+  g_iss_actor,
+  layout = lay,
+  vertex.color = "grey80",
+  vertex.size = vsize,
+  vertex.frame.color = "grey50",
+  vertex.label = V(g_iss_actor)$ID,
+  vertex.label.cex = 0.3,
+  vertex.label.color = "black",
+  main = "Issue-Netzwerk (Akteur-Projektion)"
+)
+
+# Communities
+cols_iss <- rainbow(length(unique(membership(comm_iss_obj))))
+
+par(xpd = TRUE)
+
+plot(
+  g_iss_actor,
+  layout = lay,
+  vertex.color = cols_iss[membership(comm_iss_obj)],
+  vertex.size = vsize,
+  vertex.frame.color = "grey50",
+  vertex.label = V(g_iss_actor)$ID,
+  vertex.label.cex = 0.3,
+  vertex.label.color = "black",
+  main = "Issue-Netzwerk (Akteur-Projektion - Communities)"
+)
+
+legend(
+  "topright",
+  legend = paste("Community", sort(unique(membership(comm_iss_obj)))),
+  col = cols_iss,
+  pch = 19,
+  pt.cex = 1,
+  cex = 0.5,
+  bty = "n"
+)
+
+# Abbildung speichern
+png("issue_network_actors_communities.png", width = 2000, height = 1500, res = 300)
+plot(
+  g_iss_actor,
+  layout = lay,
+  vertex.color = cols_iss[membership(comm_iss_obj)],
+  vertex.size = vsize,
+  vertex.frame.color = "grey50",
+  vertex.label = V(g_iss_actor)$ID,
+  vertex.label.cex = 0.3,
+  vertex.label.color = "black",
+  main = "Issue-Netzwerk (Akteur-Projektion - Communities)"
+)
+legend(
+  "topright",
+  legend = paste("Community", sort(unique(membership(comm_iss_obj)))),
+  col = cols_iss,
+  pch = 19,
+  pt.cex = 1,
+  cex = 0.5,
+  bty = "n"
+)
+dev.off()
+```
+
+```{r}
+# 2.1.) Issue-Netzwerk (Themen-Projektion - Communities)
+# Vorbereitung
+deg   <- degree(g_iss_items)
+vsize <- 4 + 3 * sqrt(deg)
+set.seed(123)
+lay <- layout_with_fr(g_iss_items)
+
+# Plot
+cols_iss_items <- rainbow(length(unique(membership(comm_iss_items_obj))))
+
+par(xpd = TRUE)
+
+plot(
+  g_iss_items,
+  layout = lay,
+  vertex.color = cols_iss_items[membership(comm_iss_items_obj)],
+  vertex.size = vsize,
+  vertex.frame.color = "grey50",
+  vertex.label = V(g_iss_items)$ID,
+  vertex.label.cex = 0.3,
+  vertex.label.color = "black",
+  main = "Issue-Netzwerk (Themen-Projektion - Communities)"
+)
+
+legend(
+  "topright",
+  legend = paste("Community", sort(unique(membership(comm_iss_items_obj)))),
+  col = cols_iss_items,
+  pch = 19,
+  pt.cex = 1,
+  cex = 0.5,
+  bty = "n"
+)
+
+# Abbildung speichern
+png("issue_network_themen_communities.png", width = 2000, height = 1500, res = 300)
+plot(
+  g_iss_items,
+  layout = lay,
+  vertex.color = cols_iss_items[membership(comm_iss_items_obj)],
+  vertex.size = vsize,
+  vertex.frame.color = "grey50",
+  vertex.label = V(g_iss_items)$ID,
+  vertex.label.cex = 0.3,
+  vertex.label.color = "black",
+  main = "Issue-Netzwerk (Themen-Projektion - Communities)"
+)
+
+legend(
+  "topright",
+  legend = paste("Community", sort(unique(membership(comm_iss_items_obj)))),
+  col = cols_iss_items,
+  pch = 19,
+  pt.cex = 1,
+  cex = 0.5,
+  bty = "n"
+)
+dev.off()
+```
+
+```{r}
+# 3.) Participation-Netzwerk
+deg   <- degree(g_part_actor)
+vsize <- 2 + 1.5 * sqrt(deg)
+set.seed(123)
+lay   <- layout_with_fr(g_part_actor)
+
+# Akteur-Projektion
+plot(
+  g_part_actor,
+  layout = lay,
+  vertex.color = "grey80",
+  vertex.size = vsize,
+  vertex.frame.color = "grey50",
+  vertex.label = V(g_part_actor)$ID,
+  vertex.label.cex = 0.3,
+  vertex.label.color = "black",
+  main = "Participation-Netzwerk (Akteur-Projektion)"
+)
+
+# Communities
+cols_part_actor <- rainbow(length(unique(membership(comm_part_obj))))
+
+par(xpd = TRUE)
+
+plot(
+  g_part_actor,
+  layout = lay,
+  vertex.color = cols_part_actor[membership(comm_part_obj)],
+  vertex.size = vsize,
+  vertex.frame.color = "grey50",
+  vertex.label = V(g_part_actor)$ID,
+  vertex.label.cex = 0.3,
+  vertex.label.color = "black",
+  main = "Participation-Netzwerk (Akteur-Projektion - Communities)"
+)
+
+legend(
+  "topright",
+  legend = paste("Community", sort(unique(membership(comm_part_obj)))),
+  col = cols_part_actor,
+  pch = 19,
+  pt.cex = 1,
+  cex = 0.5,
+  bty = "n"
+)
+
+
+# Abbildung speichern
+png("participation_network_actors_communities.png", width = 2000, height = 1500, res = 300)
+plot(
+  g_part_actor,
+  layout = lay,
+  vertex.color = cols_part_actor[membership(comm_part_obj)],
+  vertex.size = vsize,
+  vertex.frame.color = "grey50",
+  vertex.label = V(g_part_actor)$ID,
+  vertex.label.cex = 0.3,
+  vertex.label.color = "black",
+  main = "Participation-Netzwerk (Akteur-Projektion - Communities)"
+)
+
+legend(
+  "topright",
+  legend = paste("Community", sort(unique(membership(comm_part_obj)))),
+  col = cols_part_actor,
+  pch = 19,
+  pt.cex = 1,
+  cex = 0.5,
+  bty = "n"
+)
+dev.off()
+```
+
+```{r}
+# 3.1.) Participation-Netzwerk (Veranstaltungsprojektion - Communities)
+deg   <- degree(g_part_items)
+vsize <- 4 + 3 * sqrt(deg)
+set.seed(123)
+lay   <- layout_with_fr(g_part_items)
+
+# Plot
+cols_part_items <- rainbow(length(unique(membership(comm_part_items_obj))))
+
+par(xpd = TRUE)
+
+plot(
+  g_part_items,
+  vertex.color =  cols_part_items[membership(comm_part_items_obj)],
+  vertex.size = vsize,
+  vertex.frame.color = "grey50",
+  vertex.label.cex = 0.5,
+  vertex.label.color = "black",
+  main = "Participation-Netzwerk (Veranstaltungen-Projektion - Communities)"
+)
+
+legend(
+  "topright",
+  legend = paste("Community", sort(unique(membership(comm_part_items_obj)))),
+  col = cols_part_items,
+  pch = 19,
+  pt.cex = 1,
+  cex = 0.5,
+  bty = "n"
+)
+
+# Abbildung speichern
+png("participation_network_veranstaltungen_communities.png", width = 2000, height = 1500, res = 300)
+plot(
+  g_part_items,
+  vertex.color = cols_part_items[membership(comm_part_items_obj)],
+  vertex.size = vsize,
+  vertex.frame.color = "grey50",
+  vertex.label.cex = 0.5,
+  vertex.label.color = "black",
+  main = "Participation-Netzwerk (Veranstaltungen-Projektion - Communities)"
+)
+
+legend(
+  "topright",
+  legend = paste("Community", 
+  sort(unique(membership(comm_part_items_obj)))),
+  col = cols_part_items,
+  pch = 19,
+  pt.cex = 1,
+  cex = 0.5,
+  bty = "n"
+)
+dev.off()
+```
+
+# NETZWERKSTRUKTUR
+
+-   Anzahl der Knoten <br>
+-   Anzahl der Kanten <br>
+-   Netzwerkdichte: Verhältnis der vorhanden zu allen möglichen Verbindungen <br>
+-   Anzahl der Komponenten: Eine Komponente bezeichnet eine maximal zusammenhängende Teilmenge von Knoten, innerhalb derer zwischen allen Knoten Pfade existieren. <br>
+-   Anzahl der Communities: s. oben <br>
+-   Durchschnittliche Pfadlänge: Schritte, die im Durchschnitt notwendig sind, um beliebige Akteure im Netzwerk zu verbinden <br>
+-   Clustering-Koeffizient: misst, wie stark sich die Nachbarn eines Knotens untereinander verbinden
+-   Durchschnittlicher Grad
+
+```{r}
+netzwerke_struktur_export <- data.frame(
+  Netzwerk = c("Kooperation", "Issue", "Participation"),
+  
+  # Anzahl Knoten
+  Knoten = c(
+    vcount(g_coop),
+    vcount(g_iss_actor),
+    vcount(g_part_actor)
+  ),
+  
+  # Anzahl Kanten
+  Kanten = c(
+    ecount(g_coop),
+    ecount(g_iss_actor),
+    ecount(g_part_actor)
+  ),
+  
+  # Netzwerkdichte
+  Dichte = c(
+    edge_density(g_coop),
+    edge_density(g_iss_actor),
+    edge_density(g_part_actor)
+  ),
+  
+  # Komponenten
+  Komponenten = c(
+    components(g_coop)$no,
+    components(g_iss_actor)$no,
+    components(g_part_actor)$no
+  ),
+  
+  # Communities
+  Communities = c(
+    length(comm_coop_obj),
+    length(comm_iss_obj),
+    length(comm_part_obj)
+  ),
+  
+  # Durchschnittliche Pfadlänge
+  Durchschnittliche_Pfadlaenge = c(
+    mean_distance(g_coop, directed = FALSE, unconnected = TRUE),
+    mean_distance(g_iss_actor, directed = FALSE, unconnected = TRUE),
+    mean_distance(g_part_actor, directed = FALSE, unconnected = TRUE)
+  ),
+  
+  # Clustering-Koeffizient
+  Transitivitaet = c(
+    transitivity(g_coop, type = "global", isolates = "zero"),
+    transitivity(g_iss_actor, type = "global", isolates = "zero"),
+    transitivity(g_part_actor, type = "global", isolates = "zero")
+  ),
+  
+  # Median Degree
+  Median_Degree = c(
+    median(degree(g_coop)),
+    median(degree(g_iss_actor)),
+    median(degree(g_part_actor))
+  )
+)
+```
+
+# ZENTRALITÄTEN
+
+-   Degree: Wie viele direkte Verbindungen hat ein Knoten? <br>
+-   Betweenness: Wie oft liegt Knoten auf den kürzesten Pfaden zwischen anderen Knoten? <br>
+-   Closeness: Wie nah ist ein Knoten über die kürzesten Pfade zu allen anderen Knoten im Netzwerk positioniert? <br>
+-   Eigenvector: Wie stark ist der Knoten mit anderen zentralen Knoten verbunden?
+
+```{r}
+# 1.) Cooperation-Netzwerk
+centralities_coop_export <- data.frame(
+  ID          = V(g_coop)$ID,
+  Name        = V(g_coop)$name,
+  Community   = membership(comm_coop_obj),
+  Degree      = degree(g_coop),
+  Betweenness = betweenness(g_coop, normalized = TRUE),
+  Closeness   = closeness(g_coop, normalized = TRUE),
+  Eigenvector = eigen_centrality(g_coop)$vector
+)
+
+# 2.) Issue-Netzwerk
+centralities_iss_export <- data.frame(
+  ID          = V(g_iss_actor)$ID,
+  Name      = V(g_iss_actor)$name,
+  Community   = membership(comm_iss_obj),
+  Degree      = degree(g_iss_actor),
+  Betweenness = betweenness(g_iss_actor, normalized = TRUE),
+  Closeness   = closeness(g_iss_actor, normalized = TRUE),
+  Eigenvector = eigen_centrality(g_iss_actor)$vector
+)
+
+# 3.) Participation-Netzwerk
+centralities_part_export <- data.frame(
+  ID          = V(g_part_actor)$ID,
+  Name        = V(g_part_actor)$name,
+  Community   = membership(comm_part_obj),
+  Degree      = degree(g_part_actor),
+  Betweenness = betweenness(g_part_actor, normalized = TRUE),
+  Closeness   = closeness(g_part_actor, normalized = TRUE),
+  Eigenvector = eigen_centrality(g_part_actor)$vector
+)
+```
+
+# VERGLEICH DEGREE-ZENTRALITÄTEN DER DREI NETZWERKE
+
+Vergleichstabelle: Degree-Zentralität der einzelnen Knoten in den drei Netzwerken
+
+```{r}
+vergleich_export <- centralities_coop_export %>%
+  select(Name,Degree) %>%
+  rename(Degree_Cooperation = Degree) %>%
+  left_join(
+    centralities_iss_export %>%
+      select(Name,Degree) %>%
+      rename(Degree_Issue = Degree),
+    by="Name"
+  ) %>%
+  left_join(
+    centralities_part_export %>%
+      select(Name,Degree) %>%
+      rename(Degree_Participation = Degree),
+    by="Name"
+  )
+
+vergleich_export[is.na(vergleich_export)] <- 0
+```
+
+# KORRELATION: DEGREE-ZENTRALITÄT
+
+Korrelationsmatrix der Degree-Zentralität zwischen den verschiedenen Netzwerken: Pearson-Korrelationen <br> <br> Wertebereich: <br> -1 (perfekter negativer Zusammenhang) <br> 0 (kein Zusammenhang) <br> 1 (perfekter positiver Zusammenhang)
+
+```{r}
+cor_matrix_export <- cor(vergleich_export[,2:4], method = "pearson")
+```
+
+# Gemeinsame Akteure aller Ebenen
+
+Hier wird die Schnittmenge der Akteure identifiziert, die in allen drei Layern vorkommen.
+
+```{r}
+# Akteurslisten
+actors_coop <- V(g_coop)$name
+actors_iss  <- V(g_iss_actor)$name
+actors_part <- V(g_part_actor)$name
+
+# Schnittmenge
+common_actors <- Reduce(intersect, list(actors_coop, actors_iss, actors_part))
+
+# Netzwerke auf diese Akteure beschränken
+g_coop_sub <- induced_subgraph(g_coop, vids = common_actors)
+g_iss_sub  <- induced_subgraph(g_iss_actor, vids = common_actors)
+g_part_sub <- induced_subgraph(g_part_actor, vids = common_actors)
+
+# Zentralitäten für ausgewählte Akteure
+deg_coop <- degree(g_coop_sub)
+deg_iss  <- degree(g_iss_sub)
+deg_part <- degree(g_part_sub)
+
+# Dataframe
+df_roles <- data.frame(
+  actor = names(deg_coop),
+  deg_coop = deg_coop
+) %>%
+  left_join(
+    data.frame(actor = names(deg_iss), deg_iss = deg_iss),
+    by = "actor"
+  ) %>%
+  left_join(
+    data.frame(actor = names(deg_part), deg_part = deg_part),
+    by = "actor"
+  )
+```
+
+# ROLLENTYPEN
+
+Einteilung: Kern-Peripherie-Struktur <br> <br> Typologie: <br> - Multiplex zentral: überdurchschnittliche Degree-Werte in ≥2 Netzwerken <br> - Kooperationszentral: überdurchschnittliche Degree-Werte im Cooperation-Netzwerk <br> - Thematisch zentral: überdurchschnittliche Degree-Werte im Issue-Netzwerk <br> - Partizipationszentral: überdurchschnittliche Degree-Werte <br> - Peripher: unter dem Median in allen Netzwerken
+
+```{r}
+med_coop <- median(df_roles$deg_coop, na.rm = TRUE)
+med_iss  <- median(df_roles$deg_iss, na.rm = TRUE)
+med_part <- median(df_roles$deg_part, na.rm = TRUE)
+
+df_roles <- df_roles %>%
+  mutate(
+    coop_high = deg_coop > med_coop,
+    iss_high  = deg_iss  > med_iss,
+    part_high = deg_part > med_part,
+    
+    Typ = case_when(
+      coop_high & iss_high & part_high ~ "multiplex zentral",
+      coop_high & iss_high ~ "cooperation + issue zentral",
+      coop_high & part_high ~ "cooperation + participation zentral",
+      iss_high & part_high ~ "issue + participation zentral",
+      
+      coop_high ~ "cooperation zentral",
+      iss_high ~ "issue zentral",
+      part_high ~ "participation zentral",
+      
+      TRUE ~ "peripher"
+    )
+  )
+
+
+rollen_export <- df_roles %>%
+  count(Typ, name = "Anzahl")
+
+vergleich_export <- vergleich_export %>%
+  left_join(df_roles %>% select(actor, Typ),
+            by = c("Name" = "actor"))
+```
+
+# 3D-STREUDIAGRAMM
+
+x = Degree Cooperation-Netzwerk <br> y = Degree Issue-Netzwerk <br> z = Degree Participation-Netzwerk
+
+```{r}
+plot_data <- vergleich_export %>%
+  filter(Typ != "peripher")
+
+fig <- plot_ly(
+  plot_data,
+  x = ~Degree_Cooperation,
+  y = ~Degree_Issue,
+  z = ~Degree_Participation,
+  text = ~Name,
+  color = ~Typ,
+  colors = c(
+    "multiplex zentral" = "red",
+    "cooperation zentral" = "blue",
+    "issue zentral" = "green",
+    "participation zentral" = "purple",
+    "cooperation + issue zentral" = "orange",
+    "cooperation + participation zentral" = "pink",
+    "issue + participation zentral" = "cyan"
+  ),
+  type = "scatter3d",
+  mode = "markers+text",
+  textposition = "top center"
+)
+
+fig
+```
+
+# Organisationstypus van der Meer und Pötzsch
+
+Inwiefern unterscheidet sich die multiplexe Einbindung von Akteuren nach Organisationstyp? 
+
+```{r}
+# Typologien rejoinen
+vergleich_export <- vergleich_export %>%
+  left_join(eig, by = "Name")
+
+# Finale Tabelle pro Akteur
+meer_poetzsch_export <- vergleich_export %>%
+  mutate(
+    coop_high = Degree_Cooperation > med_coop,
+    issue_high = Degree_Issue > med_iss,
+    part_high = Degree_Participation > med_part
+  ) %>%
+  select(
+    ID,
+    Name,
+    Degree_Issue,
+    Degree_Participation,
+    Degree_Cooperation,
+    Typ,
+    `Van der Meer-Typus`,
+    `Pötzsch-Typus`
+  ) %>%
+  arrange(Typ)
+```
+
+# Kennzahlen nach Van der Meer und Pötzsch
+```{r}
+vergleich_common <- vergleich_export %>%
+  filter(Name %in% common_actors)
+
+# Kennzahlen: Van der Meer
+van_der_meer_means <- vergleich_common %>%
+  group_by(`Van der Meer-Typus`) %>%
+  summarise(
+    n = n(),
+    median_coop = median(Degree_Cooperation, na.rm = TRUE),
+    median_issue = median(Degree_Issue, na.rm = TRUE),
+    median_part = median(Degree_Participation, na.rm = TRUE)
+  )
+
+# Kennzahlen: Pötzsch
+poetzsch_means <- vergleich_common %>%
+  group_by(`Pötzsch-Typus`) %>%
+  summarise(
+    n = n(),
+    median_coop = median(Degree_Cooperation, na.rm = TRUE),
+    median_issue = median(Degree_Issue, na.rm = TRUE),
+    median_part = median(Degree_Participation, na.rm = TRUE)
+  )
+
+# Rollentyp x Organisationstyp - evtl löschen
+van_der_meer_rollen <- vergleich_common %>%
+  count(Typ, `Van der Meer-Typus`, name = "Anzahl")
+
+poetzsch_rollen <- vergleich_common %>%
+  count(Typ, `Pötzsch-Typus`, name = "Anzahl")
+```
+
+# EXPORT ERGEBNISSE
+
+```{r}
+export <- list(
+  
+  # Netzwerkstruktur
+  Netzwerkstruktur = netzwerke_struktur_export,
+  
+  # Zentralitäten + Communities
+  Zentralitaeten_Cooperation   = centralities_coop_export, 
+  Zentralitaeten_Issue         = centralities_iss_export,
+  Zentralitaeten_Participation = centralities_part_export, 
+  
+  # Communities (Akteure x Akteure)
+  Communitygroessen_Coop = comm_sizes_coop,
+  Communitygroessen_Issue_Actor      = comm_sizes_iss,
+  Communitygroessen_Part_Actor = comm_sizes_part,
+  
+  # Communities (Themen x Themen / Veranstaltungen x Veranstaltungen)
+  Communities_Issue_Issue           = comm_iss_items,
+  Communitygroessen_Issue_Issue     = comm_sizes_iss_items,
+  Communities_Part_Part           = comm_part_items,
+  Communitygroessen_Part_Part     = comm_sizes_part_items,
+  
+  # Vergleich & Korrelationen
+  Vergleich_Degree             = vergleich_export,
+  Korrelation_Netzwerke        = as.data.frame(cor_matrix_export),
+  
+  # Rollentypen
+  Rollentypen                  = rollen_export,
+  Rollentypen_Detail           = meer_poetzsch_export,
+  
+  # Organisationstypen
+  Van_der_Meer_Mittelwerte     = van_der_meer_means,
+  Poetzsch_Mittelwerte         = poetzsch_means,
+  
+  Van_der_Meer_Rollentypen     = van_der_meer_rollen,
+  Poetzsch_Rollentypen         = poetzsch_rollen
+)
+
+write_xlsx(export,"/Users/sophialuhr/Desktop/Analyse_Ergebnisse.xlsx")
+```
