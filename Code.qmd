@@ -11,18 +11,7 @@ execute:
 
 # ÜBERBLICK
 
-1.) Cooperation-Netzwerk: Verbindung über gemeinsame Kooperationen <br>
-2.) Issue-Netzwerk: Verbindung über gemeinsame Themen <br> 
-3.) Participation-Netzwerk: Verbindung über gemeinsame Teilnahme an Veranstaltungen <br> <br> 
-Knotenattribute: <br>
-- Name <br>
-- ID <br>
-- Ego-Alter <br>
-- Gründungsjahr <br>
-- Mitgliederzahl <br>
-- Akteurstypus <br>
-- Van-der-Meer-Typus <br>
-- Pötzsch-Typus 
+1.) Cooperation-Netzwerk: Verbindung über gemeinsame Kooperationen <br> 2.) Issue-Netzwerk: Verbindung über gemeinsame Themen <br> 3.) Participation-Netzwerk: Verbindung über gemeinsame Teilnahme an Veranstaltungen <br> <br> Knotenattribute: <br> - Name <br> - ID <br> - Ego-Alter <br> - Gründungsjahr <br> - Mitgliederzahl <br> - Akteurstypus <br> - Van-der-Meer-Typus <br> - Pötzsch-Typus
 
 # PAKETE
 
@@ -200,8 +189,7 @@ colnames(comm_sizes_part_items) <- c("Community","Anzahl_Veranstaltungen")
 
 # VISUALISIERUNG
 
-Layout: Fruchtermann-Reingold <br>
-Knotengröße: Degree
+Layout: Fruchtermann-Reingold <br> Knotengröße: Degree
 
 ```{r}
 # 1.) Cooperation-Netzwerk
@@ -558,8 +546,8 @@ dev.off()
 -   Anzahl der Komponenten: Eine Komponente bezeichnet eine maximal zusammenhängende Teilmenge von Knoten, innerhalb derer zwischen allen Knoten Pfade existieren. <br>
 -   Anzahl der Communities: s. oben <br>
 -   Durchschnittliche Pfadlänge: Schritte, die im Durchschnitt notwendig sind, um beliebige Akteure im Netzwerk zu verbinden <br>
--   Clustering-Koeffizient: misst, wie stark sich die Nachbarn eines Knotens untereinander verbinden
--   Durchschnittlicher Grad
+-   Clustering-Koeffizient (Transitivität): misst, wie stark sich Knoten, die über gemeinsame Nachbarn verbunden sind, auch untereinander verbinden
+-   Median Degree
 
 ```{r}
 netzwerke_struktur_export <- data.frame(
@@ -807,7 +795,7 @@ fig
 
 # Organisationstypus van der Meer und Pötzsch
 
-Inwiefern unterscheidet sich die multiplexe Einbindung von Akteuren nach Organisationstyp? 
+Inwiefern unterscheidet sich die multiplexe Einbindung von Akteuren nach Organisationstyp?
 
 ```{r}
 # Typologien rejoinen
@@ -835,6 +823,7 @@ meer_poetzsch_export <- vergleich_export %>%
 ```
 
 # Kennzahlen nach Van der Meer und Pötzsch
+
 ```{r}
 vergleich_common <- vergleich_export %>%
   filter(Name %in% common_actors)
